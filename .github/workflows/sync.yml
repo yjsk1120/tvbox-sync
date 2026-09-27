@@ -1,9 +1,53 @@
-name: Test Sync
+name: Sync PizazzGY Source
+
 'on':
   workflow_dispatch:
 
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: write
+
 jobs:
-  test:
+
+  sync:
+
     runs-on: ubuntu-latest
+
     steps:
-      - run: echo "GitHub Actions is working"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync upstream
+        run: |
+          python scripts/sync.py
+
+      - name: Check changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit update
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add www/api.json
+          git add www/.source_sha256
+
+          git commit -m "sync: update source"
+
+          git push
+```
