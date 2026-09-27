@@ -50,4 +50,3 @@ jobs:
           git commit -m "sync: update source"
 
           git push
-```
