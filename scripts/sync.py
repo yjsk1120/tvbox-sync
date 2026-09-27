@@ -1,16 +1,15 @@
 import hashlib
 import json
 import shutil
+import subprocess
 import tempfile
-import urllib.request
-from urllib.parse import quote
 import zipfile
 from pathlib import Path
 
 
-UPSTREAM_URL = ( 
+UPSTREAM_URL = (
     "https://gitee.com/PizazzXS/another-d/raw/master/"
-                + quote("单线路.zip") 
+    "%E5%8D%95%E7%BA%BF%E8%B7%AF.zip"
 )
 
 OUTPUT_FILE = Path("www/api.json")
@@ -24,20 +23,35 @@ def log(message):
 def download(url, target):
     log(f"下载上游文件：{url}")
 
-    request = urllib.request.Request(
+    command = [
+        "curl",
+        "-L",
+        "--fail",
+        "--retry", "3",
+        "--retry-delay", "3",
+        "--connect-timeout", "20",
+        "--max-time", "180",
+        "-A", "Mozilla/5.0",
+        "-o", str(target),
         url,
-        headers={
-            "User-Agent": "tvbox-sync/1.0"
-        }
+    ]
+
+    result = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
     )
 
-    with urllib.request.urlopen(
-        request,
-        timeout=120
-    ) as response:
+    if result.returncode != 0:
+        if result.stderr:
+            log(result.stderr.strip())
 
-        with open(target, "wb") as f:
-            shutil.copyfileobj(response, f)
+        raise RuntimeError(
+            f"curl 下载失败，退出码：{result.returncode}"
+        )
+
+    if not target.exists():
+        raise RuntimeError("下载文件不存在")
 
     size = target.stat().st_size
 
@@ -77,7 +91,6 @@ def find_api_json(directory):
     for file in files:
         log(f"  {file}")
 
-    # 优先使用 TVBoxOSC/tvbox/api.json
     for file in files:
         normalized = str(file).replace("\\", "/")
 
@@ -106,8 +119,6 @@ def validate_json(path):
 
     log("JSON 验证成功")
 
-    return data
-
 
 def main():
 
@@ -125,20 +136,20 @@ def main():
 
         extract_dir.mkdir()
 
-        # 1. 下载
+        # 下载
         download(
             UPSTREAM_URL,
             zip_file
         )
 
-        # 2. 计算文件 SHA256
+        # SHA256
         current_hash = sha256(zip_file)
 
         log(
             f"SHA256: {current_hash}"
         )
 
-        # 3. 判断是否有更新
+        # 检查是否有变化
         if HASH_FILE.exists():
 
             old_hash = HASH_FILE.read_text(
@@ -153,13 +164,13 @@ def main():
 
                 return
 
-        # 4. 检查 ZIP
+        # ZIP 检查
         if not zipfile.is_zipfile(zip_file):
             raise RuntimeError(
                 "下载的文件不是有效 ZIP"
             )
 
-        # 5. 解压
+        # 解压
         log("开始解压")
 
         with zipfile.ZipFile(
@@ -169,21 +180,20 @@ def main():
 
             z.extractall(extract_dir)
 
-        # 6. 找 api.json
+        # 查找 api.json
         api_file = find_api_json(
             extract_dir
         )
 
-        # 7. 验证 JSON
+        # 验证 JSON
         validate_json(api_file)
 
-        # 8. 更新自己的 api.json
+        # 更新
         shutil.copy2(
             api_file,
             OUTPUT_FILE
         )
 
-        # 9. 保存 SHA256
         HASH_FILE.write_text(
             current_hash + "\n",
             encoding="utf-8"
