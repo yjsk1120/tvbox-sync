@@ -1,20 +1,12 @@
 ```python
-#!/usr/bin/env python3
-
 import hashlib
 import json
-import os
 import shutil
-import sys
 import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
 
-
-# ============================================================
-# 配置
-# ============================================================
 
 UPSTREAM_URL = (
     "https://gitee.com/PizazzXS/another-d/raw/master/"
@@ -22,30 +14,20 @@ UPSTREAM_URL = (
 )
 
 OUTPUT_FILE = Path("www/api.json")
-STATE_FILE = Path("www/.source_sha256")
+HASH_FILE = Path("www/.source_sha256")
 
-USER_AGENT = "tvbox-sync/1.0"
-
-
-# ============================================================
-# 日志
-# ============================================================
 
 def log(message):
     print(f"[tvbox-sync] {message}", flush=True)
 
 
-# ============================================================
-# 下载
-# ============================================================
-
 def download(url, target):
-    log(f"正在下载：{url}")
+    log(f"下载上游文件：{url}")
 
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": USER_AGENT
+            "User-Agent": "tvbox-sync/1.0"
         }
     )
 
@@ -54,82 +36,58 @@ def download(url, target):
         timeout=120
     ) as response:
 
-        status = getattr(response, "status", 200)
-
-        if status < 200 or status >= 300:
-            raise RuntimeError(
-                f"下载失败，HTTP 状态码：{status}"
-            )
-
         with open(target, "wb") as f:
             shutil.copyfileobj(response, f)
 
     size = target.stat().st_size
 
-    if size < 100:
-        raise RuntimeError(
-            f"下载文件异常，大小只有 {size} bytes"
-        )
-
     log(f"下载完成：{size} bytes")
 
+    if size < 100:
+        raise RuntimeError(
+            "下载文件异常，文件太小"
+        )
 
-# ============================================================
-# SHA256
-# ============================================================
 
-def sha256_file(path):
-    sha256 = hashlib.sha256()
+def sha256(path):
+    h = hashlib.sha256()
 
     with open(path, "rb") as f:
         while True:
-            block = f.read(1024 * 1024)
+            data = f.read(1024 * 1024)
 
-            if not block:
+            if not data:
                 break
 
-            sha256.update(block)
+            h.update(data)
 
-    return sha256.hexdigest()
+    return h.hexdigest()
 
-
-# ============================================================
-# 查找 api.json
-# ============================================================
 
 def find_api_json(directory):
-    matches = []
+    files = list(directory.rglob("api.json"))
 
-    for path in directory.rglob("api.json"):
-        if path.is_file():
-            matches.append(path)
-
-    if not matches:
+    if not files:
         raise RuntimeError(
-            "ZIP 中没有找到 api.json"
+            "单线路.zip 中没有找到 api.json"
         )
 
-    if len(matches) > 1:
-        log("发现多个 api.json：")
+    log("找到以下 api.json：")
 
-        for path in matches:
-            log(f"  {path}")
+    for file in files:
+        log(f"  {file}")
 
-        # 优先寻找 TVBoxOSC/tvbox/api.json
-        for path in matches:
-            normalized = str(path).replace("\\", "/")
+    # 优先使用 TVBoxOSC/tvbox/api.json
+    for file in files:
+        normalized = str(file).replace("\\", "/")
 
-            if normalized.endswith(
-                "TVBoxOSC/tvbox/api.json"
-            ):
-                return path
+        if normalized.endswith(
+            "TVBoxOSC/tvbox/api.json"
+        ):
+            return file
 
-    return matches[0]
+    return files[0]
 
-
-# ============================================================
-# 验证 JSON
-# ============================================================
 
 def validate_json(path):
     log(f"验证 JSON：{path}")
@@ -139,7 +97,6 @@ def validate_json(path):
         "r",
         encoding="utf-8-sig"
     ) as f:
-
         data = json.load(f)
 
     if not isinstance(data, dict):
@@ -147,17 +104,10 @@ def validate_json(path):
             "api.json 不是 JSON 对象"
         )
 
-    log(
-        "JSON 验证成功，"
-        f"字段数量：{len(data)}"
-    )
+    log("JSON 验证成功")
 
     return data
 
-
-# ============================================================
-# 主程序
-# ============================================================
 
 def main():
 
@@ -166,74 +116,50 @@ def main():
         exist_ok=True
     )
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as temp:
 
-        tmp_path = Path(tmp)
+        temp = Path(temp)
 
-        zip_file = tmp_path / "source.zip"
-
-        extract_dir = tmp_path / "extracted"
+        zip_file = temp / "source.zip"
+        extract_dir = temp / "extract"
 
         extract_dir.mkdir()
 
-        # ----------------------------------------------------
         # 1. 下载
-        # ----------------------------------------------------
-
         download(
             UPSTREAM_URL,
             zip_file
         )
 
-        # ----------------------------------------------------
-        # 2. 计算 ZIP SHA256
-        # ----------------------------------------------------
-
-        source_hash = sha256_file(zip_file)
+        # 2. 计算文件 SHA256
+        current_hash = sha256(zip_file)
 
         log(
-            f"上游 ZIP SHA256：{source_hash}"
+            f"SHA256: {current_hash}"
         )
 
-        # ----------------------------------------------------
-        # 3. 检查是否和上一次一样
-        # ----------------------------------------------------
+        # 3. 判断是否有更新
+        if HASH_FILE.exists():
 
-        if STATE_FILE.exists():
+            old_hash = HASH_FILE.read_text(
+                encoding="utf-8"
+            ).strip()
 
-            old_hash = (
-                STATE_FILE
-                .read_text(
-                    encoding="utf-8"
-                )
-                .strip()
-            )
-
-            if old_hash == source_hash:
+            if old_hash == current_hash:
 
                 log(
-                    "上游文件没有变化，"
-                    "无需更新。"
+                    "上游文件没有变化"
                 )
 
-                return 0
+                return
 
-        # ----------------------------------------------------
-        # 4. 验证 ZIP
-        # ----------------------------------------------------
-
-        log("检查 ZIP 文件")
-
+        # 4. 检查 ZIP
         if not zipfile.is_zipfile(zip_file):
-
             raise RuntimeError(
                 "下载的文件不是有效 ZIP"
             )
 
-        # ----------------------------------------------------
         # 5. 解压
-        # ----------------------------------------------------
-
         log("开始解压")
 
         with zipfile.ZipFile(
@@ -243,61 +169,31 @@ def main():
 
             z.extractall(extract_dir)
 
-        # ----------------------------------------------------
-        # 6. 查找 api.json
-        # ----------------------------------------------------
-
+        # 6. 找 api.json
         api_file = find_api_json(
             extract_dir
         )
 
-        log(
-            f"找到 api.json：{api_file}"
-        )
-
-        # ----------------------------------------------------
         # 7. 验证 JSON
-        # ----------------------------------------------------
-
         validate_json(api_file)
 
-        # ----------------------------------------------------
-        # 8. 复制到自己的仓库
-        # ----------------------------------------------------
-
-        log(
-            f"更新：{OUTPUT_FILE}"
-        )
-
+        # 8. 更新自己的 api.json
         shutil.copy2(
             api_file,
             OUTPUT_FILE
         )
 
-        # ----------------------------------------------------
-        # 9. 保存上游 SHA256
-        # ----------------------------------------------------
-
-        STATE_FILE.write_text(
-            source_hash + "\n",
+        # 9. 保存 SHA256
+        HASH_FILE.write_text(
+            current_hash + "\n",
             encoding="utf-8"
         )
 
-        log("同步完成")
-
-    return 0
+        log(
+            f"同步成功：{OUTPUT_FILE}"
+        )
 
 
 if __name__ == "__main__":
-
-    try:
-        sys.exit(main())
-
-    except Exception as e:
-
-        log(
-            f"ERROR: {e}"
-        )
-
-        sys.exit(1)
+    main()
 ```
