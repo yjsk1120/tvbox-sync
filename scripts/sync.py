@@ -3,13 +3,14 @@ import json
 import shutil
 import tempfile
 import urllib.request
+from urllib.parse import quote
 import zipfile
 from pathlib import Path
 
 
-UPSTREAM_URL = (
+UPSTREAM_URL = ( 
     "https://gitee.com/PizazzXS/another-d/raw/master/"
-    "单线路.zip"
+                + quote("单线路.zip") 
 )
 
 OUTPUT_FILE = Path("www/api.json")
