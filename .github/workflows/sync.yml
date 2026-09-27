@@ -1,13 +1,9 @@
 name: Test Sync
-
-on:
+'on':
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Test
-        run: echo "GitHub Actions is working"
-```
+      - run: echo "GitHub Actions is working"
